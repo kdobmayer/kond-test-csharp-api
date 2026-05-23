@@ -85,4 +85,52 @@ public class TagsControllerTests : IClassFixture<TestWebApplicationFactory>
         var response = await _client.GetAsync("/api/tags/9999");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
+
+    [Fact]
+    public async Task GetPopular_ReturnsTagsOrderedByDocumentCountDesc()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var tagA = (await (await _client.PostAsJsonAsync("/api/tags", new CreateTagDto($"pop-a-{suffix}", null))).Content.ReadFromJsonAsync<TagDto>())!;
+        var tagB = (await (await _client.PostAsJsonAsync("/api/tags", new CreateTagDto($"pop-b-{suffix}", null))).Content.ReadFromJsonAsync<TagDto>())!;
+
+        var user = (await (await _client.PostAsJsonAsync("/api/users",
+            new CreateUserDto($"popuser{suffix}", $"pop{suffix}@test.com", "Pop User"))).Content.ReadFromJsonAsync<UserDto>())!;
+
+        var doc1 = await UploadDocument("pop-doc1.txt", user.Id);
+        var doc2 = await UploadDocument("pop-doc2.txt", user.Id);
+
+        // tagA used by 2 documents, tagB used by 1
+        await _client.PostAsync($"/api/documents/{doc1.Id}/tags/{tagA.Id}", null);
+        await _client.PostAsync($"/api/documents/{doc2.Id}/tags/{tagA.Id}", null);
+        await _client.PostAsync($"/api/documents/{doc1.Id}/tags/{tagB.Id}", null);
+
+        var response = await _client.GetAsync("/api/tags/popular");
+        response.EnsureSuccessStatusCode();
+        var popular = await response.Content.ReadFromJsonAsync<List<PopularTagDto>>();
+
+        Assert.NotNull(popular);
+        Assert.True(popular.Count <= 10);
+
+        var resultA = popular.FirstOrDefault(t => t.Id == tagA.Id);
+        var resultB = popular.FirstOrDefault(t => t.Id == tagB.Id);
+
+        Assert.NotNull(resultA);
+        Assert.Equal(2, resultA.DocumentCount);
+        Assert.NotNull(resultB);
+        Assert.Equal(1, resultB.DocumentCount);
+        Assert.True(popular.IndexOf(resultA) < popular.IndexOf(resultB));
+    }
+
+    private async Task<DocumentDto> UploadDocument(string name, int userId)
+    {
+        var content = new MultipartFormDataContent();
+        content.Add(new StringContent(name), "name");
+        content.Add(new StringContent(userId.ToString()), "createdByUserId");
+        var fileContent = new ByteArrayContent("test content"u8.ToArray());
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
+        content.Add(fileContent, "file", name);
+        var response = await _client.PostAsync("/api/documents", content);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<DocumentDto>())!;
+    }
 }

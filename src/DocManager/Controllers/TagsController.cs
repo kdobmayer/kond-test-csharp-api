@@ -29,7 +29,21 @@ public class TagsController : ControllerBase
         return Ok(tags.Select(MappingService.ToCountDto).ToList());
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("popular")]
+    public async Task<ActionResult<List<PopularTagDto>>> GetPopular()
+    {
+        var tags = await _db.Tags
+            .AsNoTracking()
+            .Select(t => new PopularTagDto(t.Id, t.Name, t.DocumentTags.Count))
+            .OrderByDescending(t => t.DocumentCount)
+            .ThenBy(t => t.Name)
+            .Take(10)
+            .ToListAsync();
+
+        return Ok(tags);
+    }
+
+    [HttpGet("{id:int}")]
     public async Task<ActionResult<TagWithCountDto>> GetById(int id)
     {
         var tag = await _db.Tags
@@ -64,7 +78,7 @@ public class TagsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = tag.Id }, MappingService.ToDto(tag));
     }
 
-    [HttpPut("{id}")]
+    [HttpPut("{id:int}")]
     public async Task<ActionResult<TagDto>> Update(int id, [FromBody] UpdateTagDto dto)
     {
         var tag = await _db.Tags.FindAsync(id);
@@ -85,7 +99,7 @@ public class TagsController : ControllerBase
         return Ok(MappingService.ToDto(tag));
     }
 
-    [HttpDelete("{id}")]
+    [HttpDelete("{id:int}")]
     public async Task<ActionResult> Delete(int id)
     {
         var tag = await _db.Tags
@@ -101,7 +115,7 @@ public class TagsController : ControllerBase
         return NoContent();
     }
 
-    [HttpGet("{id}/documents")]
+    [HttpGet("{id:int}/documents")]
     public async Task<ActionResult<List<DocumentDto>>> GetDocuments(int id)
     {
         var tag = await _db.Tags.FindAsync(id);
