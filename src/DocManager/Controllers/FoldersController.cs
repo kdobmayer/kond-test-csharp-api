@@ -12,10 +12,12 @@ namespace DocManager.Controllers;
 public class FoldersController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IDocAuthorizationService _auth;
 
-    public FoldersController(AppDbContext db)
+    public FoldersController(AppDbContext db, IDocAuthorizationService auth)
     {
         _db = db;
+        _auth = auth;
     }
 
     [HttpGet]
@@ -74,26 +76,25 @@ public class FoldersController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Name))
             return BadRequest(new { message = "Name is required" });
 
-        // Duplicated authorization check (intentional rough edge)
-        var user = await _db.Users.FindAsync(dto.CreatedByUserId);
-        if (user == null)
-            return BadRequest(new { message = "User not found" });
-        if (!user.IsActive)
-            return Forbid();
-
         if (dto.ParentFolderId.HasValue)
         {
             var parent = await _db.Folders.FindAsync(dto.ParentFolderId.Value);
             if (parent == null)
                 return BadRequest(new { message = "Parent folder not found" });
 
-            // Duplicated authorization check (intentional rough edge)
-            if (parent.CreatedByUserId != dto.CreatedByUserId)
-            {
-                var parentUser = await _db.Users.FindAsync(dto.CreatedByUserId);
-                if (parentUser == null || !parentUser.IsActive)
-                    return Forbid();
-            }
+            var parentAuthResult = await _auth.CanManageOwnedResourceAsync(dto.CreatedByUserId, parent.CreatedByUserId);
+            if (parentAuthResult == AuthorizationResult.NotFound)
+                return BadRequest(new { message = "User not found" });
+            if (parentAuthResult == AuthorizationResult.Forbidden)
+                return Forbid();
+        }
+        else
+        {
+            var authResult = await _auth.CanUseUserAsync(dto.CreatedByUserId);
+            if (authResult == AuthorizationResult.NotFound)
+                return BadRequest(new { message = "User not found" });
+            if (authResult == AuthorizationResult.Forbidden)
+                return Forbid();
         }
 
         // Check for duplicate name in same parent
@@ -134,11 +135,10 @@ public class FoldersController : ControllerBase
         if (folder == null)
             return NotFound(new { message = "Folder not found" });
 
-        // Duplicated authorization check (intentional rough edge)
-        var user = await _db.Users.FindAsync(requestingUserId);
-        if (user == null)
+        var authResult = await _auth.CanManageOwnedResourceAsync(requestingUserId, folder.CreatedByUserId);
+        if (authResult == AuthorizationResult.NotFound)
             return BadRequest(new { message = "User not found" });
-        if (!user.IsActive)
+        if (authResult == AuthorizationResult.Forbidden)
             return Forbid();
 
         if (dto.Name != null)
@@ -181,11 +181,10 @@ public class FoldersController : ControllerBase
         if (folder == null)
             return NotFound(new { message = "Folder not found" });
 
-        // Duplicated authorization check (intentional rough edge)
-        var user = await _db.Users.FindAsync(requestingUserId);
-        if (user == null)
+        var authResult = await _auth.CanManageOwnedResourceAsync(requestingUserId, folder.CreatedByUserId);
+        if (authResult == AuthorizationResult.NotFound)
             return BadRequest(new { message = "User not found" });
-        if (!user.IsActive)
+        if (authResult == AuthorizationResult.Forbidden)
             return Forbid();
 
         if (!recursive && (folder.Children.Any() || folder.Documents.Any()))

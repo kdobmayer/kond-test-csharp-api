@@ -13,11 +13,13 @@ public class DocumentsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IFileStorageService _fileStorage;
+    private readonly IDocAuthorizationService _auth;
 
-    public DocumentsController(AppDbContext db, IFileStorageService fileStorage)
+    public DocumentsController(AppDbContext db, IFileStorageService fileStorage, IDocAuthorizationService auth)
     {
         _db = db;
         _fileStorage = fileStorage;
+        _auth = auth;
     }
 
     [HttpGet]
@@ -64,26 +66,25 @@ public class DocumentsController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new { message = "File is required" });
 
-        // Duplicated authorization check (intentional rough edge)
-        var user = await _db.Users.FindAsync(createdByUserId);
-        if (user == null)
-            return BadRequest(new { message = "User not found" });
-        if (!user.IsActive)
-            return Forbid();
-
         if (folderId.HasValue)
         {
             var folder = await _db.Folders.FindAsync(folderId.Value);
             if (folder == null)
                 return BadRequest(new { message = "Folder not found" });
 
-            // Duplicated authorization check (intentional rough edge)
-            if (folder.CreatedByUserId != createdByUserId)
-            {
-                var folderUser = await _db.Users.FindAsync(createdByUserId);
-                if (folderUser == null || !folderUser.IsActive)
-                    return Forbid();
-            }
+            var folderAuthResult = await _auth.CanManageOwnedResourceAsync(createdByUserId, folder.CreatedByUserId);
+            if (folderAuthResult == AuthorizationResult.NotFound)
+                return BadRequest(new { message = "User not found" });
+            if (folderAuthResult == AuthorizationResult.Forbidden)
+                return Forbid();
+        }
+        else
+        {
+            var authResult = await _auth.CanUseUserAsync(createdByUserId);
+            if (authResult == AuthorizationResult.NotFound)
+                return BadRequest(new { message = "User not found" });
+            if (authResult == AuthorizationResult.Forbidden)
+                return Forbid();
         }
 
         await using var stream = file.OpenReadStream();
@@ -146,11 +147,10 @@ public class DocumentsController : ControllerBase
         if (doc == null)
             return NotFound(new { message = "Document not found" });
 
-        // Duplicated authorization check (intentional rough edge)
-        var user = await _db.Users.FindAsync(requestingUserId);
-        if (user == null)
+        var authResult = await _auth.CanManageOwnedResourceAsync(requestingUserId, doc.CreatedByUserId);
+        if (authResult == AuthorizationResult.NotFound)
             return BadRequest(new { message = "User not found" });
-        if (!user.IsActive)
+        if (authResult == AuthorizationResult.Forbidden)
             return Forbid();
 
         if (name != null) doc.Name = name;
@@ -194,11 +194,10 @@ public class DocumentsController : ControllerBase
         if (doc == null)
             return NotFound(new { message = "Document not found" });
 
-        // Duplicated authorization check (intentional rough edge)
-        var user = await _db.Users.FindAsync(requestingUserId);
-        if (user == null)
+        var authResult = await _auth.CanManageOwnedResourceAsync(requestingUserId, doc.CreatedByUserId);
+        if (authResult == AuthorizationResult.NotFound)
             return BadRequest(new { message = "User not found" });
-        if (!user.IsActive)
+        if (authResult == AuthorizationResult.Forbidden)
             return Forbid();
 
         // Delete all version files
