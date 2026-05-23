@@ -91,6 +91,11 @@ public record TagWithCountDto(
     DateTime CreatedAt,
     int DocumentCount);
 
+public record PopularTagDto(
+    int Id,
+    string Name,
+    int DocumentCount);
+
 // User DTOs
 public record UserDto(
     int Id,
