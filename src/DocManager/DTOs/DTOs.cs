@@ -112,6 +112,14 @@ public record UpdateUserDto(
     string? DisplayName,
     bool? IsActive);
 
+// Pagination DTO
+public record PagedResult<T>(
+    List<T> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    int TotalPages);
+
 // Search DTOs
 public record SearchResultDto(
     int Id,

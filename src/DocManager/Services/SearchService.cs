@@ -7,10 +7,9 @@ namespace DocManager.Services;
 
 public interface ISearchService
 {
-    Task<List<SearchResultDto>> SearchAsync(SearchRequestDto request);
+    Task<PagedResult<SearchResultDto>> SearchAsync(SearchRequestDto request, int page, int pageSize);
 }
 
-// Intentional rough edge: NO pagination on search results
 public class SearchService : ISearchService
 {
     private readonly AppDbContext _db;
@@ -20,7 +19,7 @@ public class SearchService : ISearchService
         _db = db;
     }
 
-    public async Task<List<SearchResultDto>> SearchAsync(SearchRequestDto request)
+    public async Task<PagedResult<SearchResultDto>> SearchAsync(SearchRequestDto request, int page, int pageSize)
     {
         var query = request.Query.ToLower();
         var results = new List<SearchResultDto>();
@@ -88,8 +87,14 @@ public class SearchService : ISearchService
             }
         }
 
-        // No pagination — returns ALL results (intentional rough edge)
-        return results.OrderByDescending(r => r.Relevance).ToList();
+        var sorted = results.OrderByDescending(r => r.Relevance).ToList();
+        var totalCount = sorted.Count;
+        var totalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)pageSize);
+        var skip = ((long)page - 1L) * pageSize;
+        var items = skip >= totalCount
+            ? new List<SearchResultDto>()
+            : sorted.Skip((int)skip).Take(pageSize).ToList();
+        return new PagedResult<SearchResultDto>(items, page, pageSize, totalCount, totalPages);
     }
 
     private static double CalculateRelevance(string query, string name, string? description)
