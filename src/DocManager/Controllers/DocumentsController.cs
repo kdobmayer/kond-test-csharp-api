@@ -40,7 +40,7 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    public async Task<ActionResult<DocumentDto>> GetById(int id)
+    public async Task<ActionResult<DocumentDto>> GetById(int id, [FromQuery] int? requestingUserId)
     {
         var doc = await _db.Documents
             .Include(d => d.Folder)
@@ -51,6 +51,23 @@ public class DocumentsController : ControllerBase
 
         if (doc == null)
             return NotFound(new { message = "Document not found" });
+
+        if (!requestingUserId.HasValue)
+            return BadRequest(new { message = "Requesting user ID is required" });
+
+        var user = await _db.Users.FindAsync(requestingUserId.Value);
+        if (user == null)
+            return BadRequest(new { message = "User not found" });
+        if (!user.IsActive)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        if (doc.CreatedByUserId != requestingUserId.Value)
+        {
+            var share = await _db.DocumentShares.FirstOrDefaultAsync(
+                ds => ds.DocumentId == id && ds.SharedWithUserId == requestingUserId.Value);
+            if (share == null)
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+        }
 
         return Ok(MappingService.ToDto(doc));
     }
@@ -155,6 +172,14 @@ public class DocumentsController : ControllerBase
         if (!user.IsActive)
             return Forbid();
 
+        if (doc.CreatedByUserId != requestingUserId)
+        {
+            var share = await _db.DocumentShares.FirstOrDefaultAsync(
+                ds => ds.DocumentId == id && ds.SharedWithUserId == requestingUserId);
+            if (share == null || !string.Equals(share.Permission, "write", StringComparison.OrdinalIgnoreCase))
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+        }
+
         if (name != null) doc.Name = name;
         if (description != null) doc.Description = description;
         if (folderId.HasValue) doc.FolderId = folderId;
@@ -218,11 +243,28 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpGet("{id}/download")]
-    public async Task<ActionResult> Download(int id)
+    public async Task<ActionResult> Download(int id, [FromQuery] int? requestingUserId)
     {
         var doc = await _db.Documents.FindAsync(id);
         if (doc == null)
             return NotFound(new { message = "Document not found" });
+
+        if (!requestingUserId.HasValue)
+            return BadRequest(new { message = "Requesting user ID is required" });
+
+        var user = await _db.Users.FindAsync(requestingUserId.Value);
+        if (user == null)
+            return BadRequest(new { message = "User not found" });
+        if (!user.IsActive)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        if (doc.CreatedByUserId != requestingUserId.Value)
+        {
+            var share = await _db.DocumentShares.FirstOrDefaultAsync(
+                ds => ds.DocumentId == id && ds.SharedWithUserId == requestingUserId.Value);
+            if (share == null)
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+        }
 
         var stream = await _fileStorage.GetFileAsync(doc.StoragePath);
         return File(stream, doc.ContentType, doc.Name);

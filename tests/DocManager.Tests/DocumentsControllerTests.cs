@@ -78,7 +78,7 @@ public class DocumentsControllerTests : IClassFixture<TestWebApplicationFactory>
         var uploadResponse = await _client.PostAsync("/api/documents", content);
         var uploaded = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
 
-        var response = await _client.GetAsync($"/api/documents/{uploaded!.Id}");
+        var response = await _client.GetAsync($"/api/documents/{uploaded!.Id}?requestingUserId={user.Id}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
@@ -97,7 +97,7 @@ public class DocumentsControllerTests : IClassFixture<TestWebApplicationFactory>
         var uploadResponse = await _client.PostAsync("/api/documents", content);
         var uploaded = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
 
-        var response = await _client.GetAsync($"/api/documents/{uploaded!.Id}/download");
+        var response = await _client.GetAsync($"/api/documents/{uploaded!.Id}/download?requestingUserId={user.Id}");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
     }
