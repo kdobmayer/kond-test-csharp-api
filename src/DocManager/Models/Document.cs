@@ -17,4 +17,5 @@ public class Document
     public User? CreatedBy { get; set; }
     public ICollection<DocumentTag> DocumentTags { get; set; } = new List<DocumentTag>();
     public ICollection<DocumentVersion> Versions { get; set; } = new List<DocumentVersion>();
+    public ICollection<DocumentShare> DocumentShares { get; set; } = new List<DocumentShare>();
 }

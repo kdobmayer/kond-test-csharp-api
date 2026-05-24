@@ -13,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<DocumentTag> DocumentTags => Set<DocumentTag>();
     public DbSet<DocumentVersion> DocumentVersions => Set<DocumentVersion>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<DocumentShare> DocumentShares => Set<DocumentShare>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -59,6 +60,27 @@ public class AppDbContext : DbContext
             .HasOne(v => v.Document)
             .WithMany(d => d.Versions)
             .HasForeignKey(v => v.DocumentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<DocumentShare>()
+            .HasKey(ds => new { ds.DocumentId, ds.SharedWithUserId });
+
+        modelBuilder.Entity<DocumentShare>()
+            .HasOne(ds => ds.Document)
+            .WithMany(d => d.DocumentShares)
+            .HasForeignKey(ds => ds.DocumentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<DocumentShare>()
+            .HasOne(ds => ds.SharedWith)
+            .WithMany(u => u.SharesReceived)
+            .HasForeignKey(ds => ds.SharedWithUserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<DocumentShare>()
+            .HasOne(ds => ds.SharedBy)
+            .WithMany(u => u.SharesGiven)
+            .HasForeignKey(ds => ds.SharedByUserId)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<Document>()

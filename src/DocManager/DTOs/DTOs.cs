@@ -1,5 +1,20 @@
 namespace DocManager.DTOs;
 
+// DocumentShare DTOs
+public record DocumentShareDto(
+    int DocumentId,
+    string DocumentName,
+    int SharedWithUserId,
+    string? SharedWithUserDisplayName,
+    int SharedByUserId,
+    string? SharedByUserDisplayName,
+    string Permission,
+    DateTime CreatedAt);
+
+public record CreateShareRequestDto(
+    int SharedWithUserId,
+    string Permission);
+
 // Document DTOs
 public record DocumentDto(
     int Id,
