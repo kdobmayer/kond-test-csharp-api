@@ -91,4 +91,17 @@ public static class MappingService
             version.CreatedAt,
             version.ChangeNote);
     }
+
+    public static DocumentShareDto ToDto(DocumentShare share)
+    {
+        return new DocumentShareDto(
+            share.DocumentId,
+            share.Document?.Name ?? string.Empty,
+            share.SharedWithUserId,
+            share.SharedWith?.DisplayName,
+            share.SharedByUserId,
+            share.SharedBy?.DisplayName,
+            share.Permission,
+            share.CreatedAt);
+    }
 }
