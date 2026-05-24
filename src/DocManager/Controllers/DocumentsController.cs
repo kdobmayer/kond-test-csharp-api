@@ -13,11 +13,13 @@ public class DocumentsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IFileStorageService _fileStorage;
+    private readonly DocumentShareService _sharingService;
 
-    public DocumentsController(AppDbContext db, IFileStorageService fileStorage)
+    public DocumentsController(AppDbContext db, IFileStorageService fileStorage, DocumentShareService sharingService)
     {
         _db = db;
         _fileStorage = fileStorage;
+        _sharingService = sharingService;
     }
 
     [HttpGet]
@@ -287,6 +289,116 @@ public class DocumentsController : ControllerBase
 
         _db.DocumentTags.Remove(docTag);
         await _db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpPost("{id}/shares")]
+    public async Task<ActionResult<DocumentShareDto>> CreateShare(
+        int id,
+        [FromBody] CreateShareRequestDto dto,
+        [FromQuery] int requestingUserId)
+    {
+        var doc = await _db.Documents.FindAsync(id);
+        if (doc == null)
+            return NotFound(new { message = "Document not found" });
+
+        var requestingUser = await _db.Users.FindAsync(requestingUserId);
+        if (requestingUser == null)
+            return BadRequest(new { message = "User not found" });
+        if (!requestingUser.IsActive)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        if (doc.CreatedByUserId != requestingUserId)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        if (!string.Equals(dto.Permission, "read", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(dto.Permission, "write", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { message = "Permission must be 'read' or 'write'" });
+
+        if (dto.SharedWithUserId == requestingUserId)
+            return BadRequest(new { message = "Cannot share a document with yourself" });
+
+        var sharedWithUser = await _db.Users.FindAsync(dto.SharedWithUserId);
+        if (sharedWithUser == null || !sharedWithUser.IsActive)
+            return NotFound(new { message = "User to share with not found or inactive" });
+
+        DocumentShare? share;
+        try
+        {
+            share = await _sharingService.ShareDocumentAsync(id, dto.SharedWithUserId, requestingUserId, dto.Permission);
+        }
+        catch (ArgumentException)
+        {
+            return BadRequest(new { message = "Permission must be 'read' or 'write'" });
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "Users cannot share documents with themselves.")
+        {
+            return BadRequest(new { message = "Cannot share a document with yourself" });
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "Document not found.")
+        {
+            return NotFound(new { message = "Document not found" });
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "Recipient user not found or inactive.")
+        {
+            return NotFound(new { message = "User to share with not found or inactive" });
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "Sharing user not found or inactive.")
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+        }
+
+        if (share == null)
+            return Conflict(new { message = "Document is already shared with this user" });
+
+        return CreatedAtAction(nameof(GetShares), new { id }, MappingService.ToDto(share));
+    }
+
+    [HttpGet("{id}/shares")]
+    public async Task<ActionResult<List<DocumentShareDto>>> GetShares(
+        int id,
+        [FromQuery] int requestingUserId)
+    {
+        var doc = await _db.Documents.FindAsync(id);
+        if (doc == null)
+            return NotFound(new { message = "Document not found" });
+
+        var requestingUser = await _db.Users.FindAsync(requestingUserId);
+        if (requestingUser == null)
+            return BadRequest(new { message = "User not found" });
+        if (!requestingUser.IsActive)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        if (doc.CreatedByUserId != requestingUserId)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        var shares = await _sharingService.GetSharesForDocumentAsync(id);
+        return Ok(shares.Select(MappingService.ToDto).ToList());
+    }
+
+    [HttpDelete("{id}/shares/{userId}")]
+    public async Task<ActionResult> RevokeShare(
+        int id,
+        int userId,
+        [FromQuery] int requestingUserId)
+    {
+        var doc = await _db.Documents.FindAsync(id);
+        if (doc == null)
+            return NotFound(new { message = "Document not found" });
+
+        var requestingUser = await _db.Users.FindAsync(requestingUserId);
+        if (requestingUser == null)
+            return BadRequest(new { message = "User not found" });
+        if (!requestingUser.IsActive)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        if (doc.CreatedByUserId != requestingUserId)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Forbidden" });
+
+        var revoked = await _sharingService.RevokeShareAsync(id, userId);
+        if (!revoked)
+            return NotFound(new { message = "Share not found" });
 
         return NoContent();
     }

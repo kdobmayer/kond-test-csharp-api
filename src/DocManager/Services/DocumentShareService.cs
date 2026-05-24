@@ -57,7 +57,24 @@ public class DocumentShareService
         };
 
         _db.DocumentShares.Add(share);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            _db.Entry(share).State = EntityState.Detached;
+
+            var duplicateExists = await _db.DocumentShares
+                .AsNoTracking()
+                .AnyAsync(ds => ds.DocumentId == documentId && ds.SharedWithUserId == sharedWithUserId);
+
+            if (duplicateExists)
+                return null;
+
+            throw;
+        }
+
         return share;
     }
 
