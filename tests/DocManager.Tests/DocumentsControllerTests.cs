@@ -174,9 +174,149 @@ public class DocumentsControllerTests : IClassFixture<TestWebApplicationFactory>
 
         var response = await _client.GetAsync($"/api/documents/{uploaded!.Id}/versions");
         response.EnsureSuccessStatusCode();
-        var versions = await response.Content.ReadFromJsonAsync<List<DocumentVersionDto>>();
+        var versions = await response.Content.ReadFromJsonAsync<List<DocumentVersionDetailDto>>();
         Assert.NotNull(versions);
         Assert.Single(versions);
         Assert.Equal(1, versions[0].VersionNumber);
+        Assert.Equal("versioned.txt", versions[0].Name);
+        Assert.Equal(user.Id, versions[0].CreatedByUserId);
+    }
+
+    private MultipartFormDataContent CreateUpdateContent(int userId, string? name = null, string fileContent = "Updated content.")
+    {
+        var content = new MultipartFormDataContent();
+        content.Add(new StringContent(userId.ToString()), "requestingUserId");
+        if (name != null)
+            content.Add(new StringContent(name), "name");
+
+        var fileBytes = System.Text.Encoding.UTF8.GetBytes(fileContent);
+        var fileData = new ByteArrayContent(fileBytes);
+        fileData.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        content.Add(fileData, "file", "updated.bin");
+
+        return content;
+    }
+
+    [Fact]
+    public async Task CompareVersions_AdjacentVersions_ReturnsDiffs()
+    {
+        var user = await CreateTestUser("cmpAdj");
+        var uploadContent = CreateUploadContent("original.txt", user.Id);
+        var uploadResponse = await _client.PostAsync("/api/documents", uploadContent);
+        var doc = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
+
+        var updateContent = CreateUpdateContent(user.Id, fileContent: "Updated content for v2.");
+        await _client.PutAsync($"/api/documents/{doc!.Id}", updateContent);
+
+        var response = await _client.GetAsync($"/api/documents/{doc.Id}/versions/1/compare/2");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var comparison = await response.Content.ReadFromJsonAsync<VersionComparisonDto>();
+        Assert.NotNull(comparison);
+        Assert.Equal(doc.Id, comparison.DocumentId);
+        Assert.Equal(1, comparison.V1);
+        Assert.Equal(2, comparison.V2);
+        Assert.Equal(user.Id, comparison.V1CreatedByUserId);
+        Assert.Equal(user.Id, comparison.V2CreatedByUserId);
+        Assert.NotNull(comparison.Changes);
+        var sizeChange = comparison.Changes.FirstOrDefault(c => c.FieldName == "fileSize");
+        Assert.NotNull(sizeChange);
+    }
+
+    [Fact]
+    public async Task CompareVersions_NonAdjacentVersions_ReturnsDiffs()
+    {
+        var user = await CreateTestUser("cmpNonAdj");
+        var uploadContent = CreateUploadContent("doc-v1.txt", user.Id);
+        var uploadResponse = await _client.PostAsync("/api/documents", uploadContent);
+        var doc = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
+
+        await _client.PutAsync($"/api/documents/{doc!.Id}", CreateUpdateContent(user.Id, fileContent: "v2 content."));
+        await _client.PutAsync($"/api/documents/{doc.Id}", CreateUpdateContent(user.Id, fileContent: "v3 content is longer than v1."));
+
+        var response = await _client.GetAsync($"/api/documents/{doc.Id}/versions/1/compare/3");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var comparison = await response.Content.ReadFromJsonAsync<VersionComparisonDto>();
+        Assert.NotNull(comparison);
+        Assert.Equal(1, comparison.V1);
+        Assert.Equal(3, comparison.V2);
+        var sizeChange = comparison.Changes.FirstOrDefault(c => c.FieldName == "fileSize");
+        Assert.NotNull(sizeChange);
+    }
+
+    [Fact]
+    public async Task CompareVersions_InvalidVersionNumber_ReturnsNotFound()
+    {
+        var user = await CreateTestUser("cmpInvalid");
+        var uploadContent = CreateUploadContent("single.txt", user.Id);
+        var uploadResponse = await _client.PostAsync("/api/documents", uploadContent);
+        var doc = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
+
+        var response = await _client.GetAsync($"/api/documents/{doc!.Id}/versions/1/compare/99");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompareVersions_DocumentNotFound_ReturnsNotFound()
+    {
+        var response = await _client.GetAsync("/api/documents/9999/versions/1/compare/2");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompareVersions_SingleVersion_SameVersionReturnsNoChanges()
+    {
+        var user = await CreateTestUser("cmpSingle");
+        var uploadContent = CreateUploadContent("single-ver.txt", user.Id);
+        var uploadResponse = await _client.PostAsync("/api/documents", uploadContent);
+        var doc = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
+
+        var response = await _client.GetAsync($"/api/documents/{doc!.Id}/versions/1/compare/1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var comparison = await response.Content.ReadFromJsonAsync<VersionComparisonDto>();
+        Assert.NotNull(comparison);
+        Assert.Empty(comparison.Changes);
+    }
+
+    [Fact]
+    public async Task GetVersions_AfterMultipleUpdates_ReturnsAllVersionsWithMetadata()
+    {
+        var user = await CreateTestUser("verMeta");
+        var uploadContent = CreateUploadContent("meta.txt", user.Id);
+        var uploadResponse = await _client.PostAsync("/api/documents", uploadContent);
+        var doc = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
+
+        await _client.PutAsync($"/api/documents/{doc!.Id}", CreateUpdateContent(user.Id, fileContent: "v2 content."));
+
+        var response = await _client.GetAsync($"/api/documents/{doc.Id}/versions");
+        response.EnsureSuccessStatusCode();
+        var versions = await response.Content.ReadFromJsonAsync<List<DocumentVersionDetailDto>>();
+        Assert.NotNull(versions);
+        Assert.Equal(2, versions.Count);
+        Assert.All(versions, v => Assert.Equal(user.Id, v.CreatedByUserId));
+    }
+
+    [Fact]
+    public async Task DownloadVersion_AfterUpdate_ReturnsArchivedOriginalContent()
+    {
+        var user = await CreateTestUser("verDownload");
+        var uploadContent = CreateUploadContent("download-version.txt", user.Id);
+        var uploadResponse = await _client.PostAsync("/api/documents", uploadContent);
+        var doc = await uploadResponse.Content.ReadFromJsonAsync<DocumentDto>();
+
+        await _client.PutAsync($"/api/documents/{doc!.Id}", CreateUpdateContent(user.Id, fileContent: "Updated content for current version."));
+
+        var versionResponse = await _client.GetAsync($"/api/documents/{doc.Id}/versions/1/download");
+        versionResponse.EnsureSuccessStatusCode();
+        var versionContent = await versionResponse.Content.ReadAsStringAsync();
+
+        var currentResponse = await _client.GetAsync($"/api/documents/{doc.Id}/download");
+        currentResponse.EnsureSuccessStatusCode();
+        var currentContent = await currentResponse.Content.ReadAsStringAsync();
+
+        Assert.Equal("Hello, World! This is test content.", versionContent);
+        Assert.Equal("Updated content for current version.", currentContent);
     }
 }

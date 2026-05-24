@@ -61,6 +61,12 @@ public class AppDbContext : DbContext
             .HasForeignKey(v => v.DocumentId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        modelBuilder.Entity<DocumentVersion>()
+            .HasOne(v => v.CreatedBy)
+            .WithMany()
+            .HasForeignKey(v => v.CreatedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         modelBuilder.Entity<Document>()
             .HasIndex(d => d.Name);
 

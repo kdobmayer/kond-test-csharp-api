@@ -36,6 +36,34 @@ public record DocumentVersionDto(
     DateTime CreatedAt,
     string? ChangeNote);
 
+public record DocumentVersionDetailDto(
+    int Id,
+    int VersionNumber,
+    string Name,
+    long FileSize,
+    string ContentType,
+    DateTime CreatedAt,
+    string? ChangeNote,
+    int CreatedByUserId,
+    string? CreatedByName);
+
+public record VersionFieldChangeDto(
+    string FieldName,
+    string? OldValue,
+    string? NewValue);
+
+public record VersionComparisonDto(
+    int DocumentId,
+    int V1,
+    int V2,
+    DateTime V1CreatedAt,
+    DateTime V2CreatedAt,
+    int V1CreatedByUserId,
+    string? V1CreatedByName,
+    int V2CreatedByUserId,
+    string? V2CreatedByName,
+    List<VersionFieldChangeDto> Changes);
+
 // Folder DTOs
 public record FolderDto(
     int Id,

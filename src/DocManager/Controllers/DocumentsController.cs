@@ -109,10 +109,12 @@ public class DocumentsController : ControllerBase
         {
             DocumentId = document.Id,
             VersionNumber = 1,
+            Name = name,
             StoragePath = storagePath,
             FileSize = file.Length,
             ContentType = file.ContentType,
-            ChangeNote = "Initial upload"
+            ChangeNote = "Initial upload",
+            CreatedByUserId = createdByUserId
         };
         _db.DocumentVersions.Add(version);
         await _db.SaveChangesAsync();
@@ -153,32 +155,44 @@ public class DocumentsController : ControllerBase
         if (!user.IsActive)
             return Forbid();
 
+        var currentName = doc.Name;
         if (name != null) doc.Name = name;
         if (description != null) doc.Description = description;
         if (folderId.HasValue) doc.FolderId = folderId;
 
         if (file != null && file.Length > 0)
         {
-            // Save current version before overwriting (versioning)
-            var versionCopy = await _fileStorage.CopyFileAsync(doc.StoragePath, $"v{doc.Version}_{doc.Name}");
+            var currentVersionRecord = await _db.DocumentVersions
+                .FirstOrDefaultAsync(v => v.DocumentId == doc.Id && v.VersionNumber == doc.Version);
+
+            if (currentVersionRecord == null)
+                return Conflict(new { message = "Current document version record not found" });
+
+            // Preserve the current live file as an immutable archived version before replacing it.
+            var archivedStoragePath = await _fileStorage.CopyFileAsync(doc.StoragePath, $"v{doc.Version}_{currentName}");
+            currentVersionRecord.Name = currentName;
+            currentVersionRecord.StoragePath = archivedStoragePath;
+
+            await using var stream = file.OpenReadStream();
+            var newStoragePath = await _fileStorage.SaveFileAsync(stream, file.FileName, file.ContentType);
+            var newVersionNumber = doc.Version + 1;
             var versionRecord = new DocumentVersion
             {
                 DocumentId = doc.Id,
-                VersionNumber = doc.Version,
-                StoragePath = versionCopy,
-                FileSize = doc.FileSize,
-                ContentType = doc.ContentType,
-                ChangeNote = changeNote ?? $"Version {doc.Version} archived"
+                VersionNumber = newVersionNumber,
+                Name = doc.Name,
+                StoragePath = newStoragePath,
+                FileSize = file.Length,
+                ContentType = file.ContentType,
+                ChangeNote = changeNote ?? $"Version {newVersionNumber}",
+                CreatedByUserId = requestingUserId
             };
             _db.DocumentVersions.Add(versionRecord);
 
-            // Upload new file
-            await _fileStorage.DeleteFileAsync(doc.StoragePath);
-            await using var stream = file.OpenReadStream();
-            doc.StoragePath = await _fileStorage.SaveFileAsync(stream, file.FileName, file.ContentType);
+            doc.StoragePath = newStoragePath;
             doc.FileSize = file.Length;
             doc.ContentType = file.ContentType;
-            doc.Version++;
+            doc.Version = newVersionNumber;
         }
 
         doc.UpdatedAt = DateTime.UtcNow;
@@ -227,18 +241,60 @@ public class DocumentsController : ControllerBase
     }
 
     [HttpGet("{id}/versions")]
-    public async Task<ActionResult<List<DocumentVersionDto>>> GetVersions(int id)
+    public async Task<ActionResult<List<DocumentVersionDetailDto>>> GetVersions(int id)
     {
         var doc = await _db.Documents.FindAsync(id);
         if (doc == null)
             return NotFound(new { message = "Document not found" });
 
         var versions = await _db.DocumentVersions
+            .Include(v => v.CreatedBy)
             .Where(v => v.DocumentId == id)
             .OrderByDescending(v => v.VersionNumber)
             .ToListAsync();
 
-        return Ok(versions.Select(MappingService.ToDto).ToList());
+        return Ok(versions.Select(MappingService.ToDetailDto).ToList());
+    }
+
+    [HttpGet("{id}/versions/{v1}/compare/{v2}")]
+    public async Task<ActionResult<VersionComparisonDto>> CompareVersions(int id, int v1, int v2)
+    {
+        var doc = await _db.Documents.FindAsync(id);
+        if (doc == null)
+            return NotFound(new { message = "Document not found" });
+
+        var version1 = await _db.DocumentVersions
+            .Include(v => v.CreatedBy)
+            .FirstOrDefaultAsync(v => v.DocumentId == id && v.VersionNumber == v1);
+        if (version1 == null)
+            return NotFound(new { message = $"Version {v1} not found" });
+
+        var version2 = await _db.DocumentVersions
+            .Include(v => v.CreatedBy)
+            .FirstOrDefaultAsync(v => v.DocumentId == id && v.VersionNumber == v2);
+        if (version2 == null)
+            return NotFound(new { message = $"Version {v2} not found" });
+
+        var changes = new List<VersionFieldChangeDto>();
+
+        if (version1.Name != version2.Name)
+            changes.Add(new VersionFieldChangeDto("name", version1.Name, version2.Name));
+        if (version1.ContentType != version2.ContentType)
+            changes.Add(new VersionFieldChangeDto("contentType", version1.ContentType, version2.ContentType));
+        if (version1.FileSize != version2.FileSize)
+            changes.Add(new VersionFieldChangeDto("fileSize", version1.FileSize.ToString(), version2.FileSize.ToString()));
+
+        return Ok(new VersionComparisonDto(
+            id,
+            v1,
+            v2,
+            version1.CreatedAt,
+            version2.CreatedAt,
+            version1.CreatedByUserId,
+            version1.CreatedBy?.DisplayName,
+            version2.CreatedByUserId,
+            version2.CreatedBy?.DisplayName,
+            changes));
     }
 
     [HttpGet("{id}/versions/{versionNumber}/download")]
