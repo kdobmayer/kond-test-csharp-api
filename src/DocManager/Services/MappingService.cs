@@ -91,4 +91,18 @@ public static class MappingService
             version.CreatedAt,
             version.ChangeNote);
     }
+
+    public static DocumentVersionDetailDto ToDetailDto(DocumentVersion version)
+    {
+        return new DocumentVersionDetailDto(
+            version.Id,
+            version.VersionNumber,
+            version.Name,
+            version.FileSize,
+            version.ContentType,
+            version.CreatedAt,
+            version.ChangeNote,
+            version.CreatedByUserId,
+            version.CreatedBy?.DisplayName);
+    }
 }
